@@ -8,7 +8,7 @@ from torchmetrics import Metric, MeanMetric
 from transformers import AutoModel, AutoTokenizer, RobertaConfig
 import torch.nn.functional as F
 from transformers.models.roberta.modeling_roberta import RobertaEncoder, RobertaPooler
-from xztrainer import XZTrainable, ContextType, BaseContext, ModelOutputsType, DataType
+from xztrainer import XZTrainable, ContextType, BaseContext, ModelOutputsType, DataType, TrainContext
 
 from mediahack.intra.ext_att_mask import get_extended_attention_mask
 
@@ -18,11 +18,31 @@ NUM_CLASSES = 18
 TRUNCATE_TEXT_TO = 1024
 MAX_CLIP_EMBEDDINGS = 512
 
+CLASS_WEIGHTS = [1.0,
+                 3.2580115710662065,
+                 9.103051478404778,
+                 5.704783471390088,
+                 4.342198119895993,
+                 4.816882076735579,
+                 7.638659072509749,
+                 6.8689022544958505,
+                 6.8689022544958505,
+                 6.305719370079321,
+                 7.485212695101529,
+                 5.988170156081223,
+                 6.146674645318581,
+                 4.886359925055796,
+                 4.645178201658588,
+                 2.5045759647810204,
+                 2.8268508803107704,
+                 5.255649221504019]  # sqrt(max(w)/w_i)
+
 
 class ShareModel(nn.Module):
     def __init__(self):
         super().__init__()
-        self.audio_encoder = AutoModel.from_pretrained(AUDIO_ENCODER, trust_remote_code=True, pooler_type='first_token_transform')
+        self.audio_encoder = AutoModel.from_pretrained(AUDIO_ENCODER, trust_remote_code=True,
+                                                       pooler_type='first_token_transform')
         self.clip_transform = nn.Linear(768, 768)
         self.clip_pos = nn.Embedding(MAX_CLIP_EMBEDDINGS, 768)
         self.no_clip_embed = nn.Parameter(torch.ones((1, 1, 768)), requires_grad=True)
@@ -47,7 +67,9 @@ class ShareModel(nn.Module):
         hasnt_clip = ~has_clip
         clip_embeddings[hasnt_clip] = self.no_clip_embed.repeat(hasnt_clip.sum(), 1, 1)
         clip_embeddings = self.clip_transform(clip_embeddings)
-        clip_pos = self.clip_pos(torch.arange(0, clip_embeddings.shape[1], device=clip_embeddings.device, dtype=torch.long).unsqueeze(0).repeat(clip_embeddings.shape[0], 1))
+        clip_pos = self.clip_pos(
+            torch.arange(0, clip_embeddings.shape[1], device=clip_embeddings.device, dtype=torch.long).unsqueeze(
+                0).repeat(clip_embeddings.shape[0], 1))
         clip_embeddings = clip_embeddings + clip_pos
 
         transformer_input_embeds = torch.cat([
@@ -68,7 +90,10 @@ class ShareModel(nn.Module):
 
 class ShareTrainable(XZTrainable):
     def __init__(self):
-        self._loss = nn.CrossEntropyLoss()
+        self._loss = None
+
+    def on_load(self, context: TrainContext, step: int):
+        self._loss = nn.CrossEntropyLoss(weight=torch.tensor(CLASS_WEIGHTS, device=context.model_unwrapped.cls_token.device, dtype=torch.float32))
 
     def step(self, context: BaseContext, data: DataType) -> tuple[Tensor, ModelOutputsType]:
         model_logits = context.model(**data)
@@ -108,8 +133,10 @@ class ShareDataset(Dataset):
         self.transcriptions = transcriptions
         self.clip_embed_dir = clip_embed_dir
         self.idx_to_key = {i: k for i, k in enumerate(targets)}
-        self.tokenizer_audio = AutoTokenizer.from_pretrained(AUDIO_ENCODER, max_length=TRUNCATE_TEXT_TO, truncation='longest_first')
-        self.tokenizer_ocr = AutoTokenizer.from_pretrained(OCR_ENCODER, max_length=TRUNCATE_TEXT_TO, truncation='longest_first')
+        self.tokenizer_audio = AutoTokenizer.from_pretrained(AUDIO_ENCODER, max_length=TRUNCATE_TEXT_TO,
+                                                             truncation='longest_first')
+        self.tokenizer_ocr = AutoTokenizer.from_pretrained(OCR_ENCODER, max_length=TRUNCATE_TEXT_TO,
+                                                           truncation='longest_first')
 
     def __len__(self):
         return len(self.targets)
@@ -127,7 +154,7 @@ class ShareDataset(Dataset):
         else:
             clip_embed = torch.zeros((1, 768))
             has_clip = False
-        clip_mask = torch.ones((clip_embed.shape[0], ), dtype=torch.long)
+        clip_mask = torch.ones((clip_embed.shape[0],), dtype=torch.long)
 
         return {
             'target': torch.scalar_tensor(target, dtype=torch.long),

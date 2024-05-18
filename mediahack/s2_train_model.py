@@ -38,7 +38,7 @@ def main(transcription_path: Path, clip_dir: Path, target_path: Path):
     targets = pd.read_csv(target_path, dtype={'Advertisement ID': int, 'Segment_num': int})
     targets = {int(x['Advertisement ID']): map_class(x['Segment_num']) for _, x in targets.iterrows()}
 
-    train_ids, val_ids = train_test_split(list(targets.keys()), test_size=0.1, random_state=0xCAFE)
+    train_ids, val_ids = train_test_split(list(targets.keys()), test_size=0.1, random_state=0xCAFE, stratify=list(targets.values()))
     train_ids, val_ids = set(train_ids), set(val_ids)
     train_targets, val_targets = split_dict(targets, train_ids), split_dict(targets, val_ids)
     train_transcriptions, val_transcriptions = split_dict(transcriptions, train_ids), split_dict(transcriptions, val_ids)
@@ -53,7 +53,7 @@ def main(transcription_path: Path, clip_dir: Path, target_path: Path):
 
     trainer = XZTrainer(
         config=XZTrainerConfig(
-            experiment_name='train-fullclip-fixmask',
+            experiment_name='train-fullclip-fixmask-stratified-w',
             minibatch_size=4,
             minibatch_size_eval=4,
             epochs=1,
