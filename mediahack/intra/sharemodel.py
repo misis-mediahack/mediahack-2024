@@ -41,10 +41,10 @@ class ShareModel(nn.Module):
         nn.init.uniform_(self.cls_token)
         self.cls = nn.Linear(768, NUM_CLASSES)
 
-    def forward(self, audio_ids, audio_mask, clip_embeddings, clip_mask, **kwargs):
+    def forward(self, audio_ids, audio_mask, clip_embeddings, clip_mask, has_clip, **kwargs):
         audio_out = self.audio_encoder(input_ids=audio_ids, attention_mask=audio_mask).pooler_output
 
-        hasnt_clip = clip_mask.sum(dim=1) == 0
+        hasnt_clip = ~has_clip
         clip_embeddings[hasnt_clip] = self.no_clip_embed.repeat(hasnt_clip.sum(), 1, 1)
         clip_embeddings = self.clip_transform(clip_embeddings)
         clip_pos = self.clip_pos(torch.arange(0, clip_embeddings.shape[1], device=clip_embeddings.device, dtype=torch.long).unsqueeze(0).repeat(clip_embeddings.shape[0], 1))
@@ -123,8 +123,10 @@ class ShareDataset(Dataset):
         if clip_file.is_file():
             with clip_file.open('rb') as f:
                 clip_embed = torch.load(f)[:MAX_CLIP_EMBEDDINGS]
+            has_clip = True
         else:
-            clip_embed = torch.empty((0, 768))
+            clip_embed = torch.zeros((1, 768))
+            has_clip = False
         clip_mask = torch.ones((clip_embed.shape[0], ), dtype=torch.long)
 
         return {
@@ -132,17 +134,18 @@ class ShareDataset(Dataset):
             'audio_ids': torch.tensor(transcription_enc.input_ids[:TRUNCATE_TEXT_TO], dtype=torch.long),
             'audio_mask': torch.tensor(transcription_enc.attention_mask[:TRUNCATE_TEXT_TO], dtype=torch.long),
             'clip_embed': clip_embed,
-            'clip_mask': clip_mask
+            'clip_mask': clip_mask,
+            'has_clip': torch.scalar_tensor(has_clip, dtype=torch.bool)
         }
 
 
-def stack_pad_left(items: list[torch.Tensor], pad_value):
+def stack_pad_right(items: list[torch.Tensor], pad_value):
     max_len = max(x.shape[0] for x in items)
-    items = [F.pad(x, (max_len - x.shape[0], 0), value=pad_value) for x in items]
+    items = [F.pad(x, (0, max_len - x.shape[0]), value=pad_value) for x in items]
     return torch.stack(items, dim=0)
 
 
-def stack_pad_left_3d(items: list[torch.Tensor], pad_value):
+def stack_pad_right_3d(items: list[torch.Tensor], pad_value):
     max_len = max(x.shape[0] for x in items)
     items = [F.pad(x, (0, 0, 0, max_len - x.shape[0]), value=pad_value) for x in items]
     return torch.stack(items, dim=0)
@@ -152,8 +155,9 @@ class ShareCollator:
     def __call__(self, batch):
         return {
             'target': torch.stack([x['target'] for x in batch]),
-            'audio_ids': stack_pad_left([x['audio_ids'] for x in batch], 0),
-            'audio_mask': stack_pad_left([x['audio_mask'] for x in batch], 0),
-            'clip_embeddings': stack_pad_left_3d([x['clip_embed'] for x in batch], pad_value=0),
-            'clip_mask': stack_pad_left([x['clip_mask'] for x in batch], pad_value=0)
+            'audio_ids': stack_pad_right([x['audio_ids'] for x in batch], 0),
+            'audio_mask': stack_pad_right([x['audio_mask'] for x in batch], 0),
+            'clip_embeddings': stack_pad_right_3d([x['clip_embed'] for x in batch], pad_value=0),
+            'clip_mask': stack_pad_right([x['clip_mask'] for x in batch], pad_value=0),
+            'has_clip': torch.stack([x['has_clip'] for x in batch]),
         }
