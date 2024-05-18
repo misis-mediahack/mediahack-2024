@@ -1,6 +1,16 @@
 from pathlib import Path
 
 
+OK_EXTENSIONS = {
+    'wav',
+    'mp4',
+    'avi',
+    'flv',
+    'wbm',
+    'ogg'
+}
+
+
 def get_video_list(video_dir: Path):
     return [x for x in video_dir.glob('*.*') if
-            x not in {'dashboard_data.csv', 'readme.md', 'segment_dict.xlsx', 'train_segments.csv'}]
+            x.name.split('.')[-1] in OK_EXTENSIONS]

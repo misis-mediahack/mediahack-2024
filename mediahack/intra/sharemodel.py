@@ -16,12 +16,17 @@ AUDIO_ENCODER = 'Tochka-AI/ruRoPEBert-e5-base-2k'
 OCR_ENCODER = 'Tochka-AI/ruRoPEBert-e5-base-2k'
 NUM_CLASSES = 18
 TRUNCATE_TEXT_TO = 1024
+MAX_CLIP_EMBEDDINGS = 512
 
 
 class ShareModel(nn.Module):
     def __init__(self):
         super().__init__()
         self.audio_encoder = AutoModel.from_pretrained(AUDIO_ENCODER, trust_remote_code=True, pooler_type='first_token_transform')
+        self.clip_transform = nn.Linear(768, 768)
+        self.clip_pos = nn.Embedding(MAX_CLIP_EMBEDDINGS, 768)
+        self.no_clip_embed = nn.Parameter(torch.ones((1, 1, 768)), requires_grad=True)
+        nn.init.uniform_(self.no_clip_embed)
 
         cfg = RobertaConfig(
             hidden_size=768,
@@ -33,10 +38,18 @@ class ShareModel(nn.Module):
         self.total_encoder = RobertaEncoder(cfg)
         self.total_pooler = RobertaPooler(cfg)
         self.cls_token = nn.Parameter(torch.ones((1, 1, 768)), requires_grad=True)
+        nn.init.uniform_(self.cls_token)
         self.cls = nn.Linear(768, NUM_CLASSES)
 
     def forward(self, audio_ids, audio_mask, clip_embeddings, clip_mask, **kwargs):
         audio_out = self.audio_encoder(input_ids=audio_ids, attention_mask=audio_mask).pooler_output
+
+        hasnt_clip = clip_mask.sum(dim=1) == 0
+        clip_embeddings[hasnt_clip] = self.no_clip_embed.repeat(hasnt_clip.sum(), 1, 1)
+        clip_embeddings = self.clip_transform(clip_embeddings)
+        clip_pos = self.clip_pos(torch.arange(0, clip_embeddings.shape[1], device=clip_embeddings.device, dtype=torch.long).unsqueeze(0).repeat(clip_embeddings.shape[0], 1))
+        clip_embeddings = clip_embeddings + clip_pos
+
         transformer_input_embeds = torch.cat([
             self.cls_token.repeat(audio_out.shape[0], 1, 1),
             audio_out.unsqueeze(1),
@@ -109,7 +122,7 @@ class ShareDataset(Dataset):
         clip_file = self.clip_embed_dir / f'{key}.pt'
         if clip_file.is_file():
             with clip_file.open('rb') as f:
-                clip_embed = torch.load(f)
+                clip_embed = torch.load(f)[:MAX_CLIP_EMBEDDINGS]
         else:
             clip_embed = torch.empty((0, 768))
         clip_mask = torch.ones((clip_embed.shape[0], ), dtype=torch.long)
