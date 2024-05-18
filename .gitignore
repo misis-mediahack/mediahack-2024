@@ -5,3 +5,4 @@ checkpoint
 data
 data_processed
 data-test
+predict.csv
