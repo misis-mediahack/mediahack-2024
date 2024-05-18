@@ -55,3 +55,16 @@ python -m mediahack.s3_infer --video-dir ./data-test --model-file ./model.safete
 Также можно задать аргументы --batch-size (число) и --device (cuda или cpu), чтобы изменить количество одновременно обрабатываемых данных (если они не влазят в память), либо изменить устройство (если нет GPU)
 
 После окончания предсказания, будет создан файл, имеющий две колонки - идентификатор промо и предсказанный класс. Путь указывается аргументом --out-path
+
+
+## Дашборд
+
+Запустить дашборд можно командой
+```bash
+ python -m mediahack.dashboard --dashboard-data data/dashboard_data.csv --segment-dict data/segment_dict.xlsx --segment-predictions data/train_segments.csv
+```
+Аргументы --dashboard-data, --segment-dict, --segment-predictions отвечают за пути к данным дашборда, названиям классов и предсказаниям классов соответственно
+
+Также можно указать аргумент --port (номер порта), чтобы изменить порт по умолчанию.
+
+По умолчанию дашборд после запуска будет доступен по адресу `localhost:6008`
