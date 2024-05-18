@@ -29,8 +29,9 @@ def split_dict(x, include):
 
 @click.command()
 @click.option('--transcription-path', type=Path, required=True)
+@click.option('--clip-dir', type=Path, required=True)
 @click.option('--target-path', type=Path, required=True)
-def main(transcription_path: Path, target_path: Path):
+def main(transcription_path: Path, clip_dir: Path, target_path: Path):
     enable_tf32()
     transcriptions = pd.read_csv(transcription_path, dtype={'file': str, 'transcription': str}).fillna('')
     transcriptions = {file_name_to_id(x.file): x.transcription for x in transcriptions.itertuples()}
@@ -45,7 +46,7 @@ def main(transcription_path: Path, target_path: Path):
     train_ids, val_ids = set(train_ids), set(val_ids)
     train_targets, val_targets = split_dict(targets, train_ids), split_dict(targets, val_ids)
     train_transcriptions, val_transcriptions = split_dict(transcriptions, train_ids), split_dict(transcriptions, val_ids)
-    train_ds, val_ds = ShareDataset(train_targets, train_transcriptions), ShareDataset(val_targets, val_transcriptions)
+    train_ds, val_ds = ShareDataset(train_targets, train_transcriptions, clip_dir), ShareDataset(val_targets, val_transcriptions, clip_dir)
 
     accel = Accelerator(
         gradient_accumulation_steps=4,

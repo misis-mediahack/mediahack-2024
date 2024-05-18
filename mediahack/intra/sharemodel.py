@@ -1,11 +1,16 @@
+from pathlib import Path
+
 import torch
 import torchmetrics
 from torch import nn, Tensor
 from torch.utils.data import Dataset
 from torchmetrics import Metric, MeanMetric
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModel, AutoTokenizer, RobertaConfig
 import torch.nn.functional as F
+from transformers.models.roberta.modeling_roberta import RobertaEncoder, RobertaPooler
 from xztrainer import XZTrainable, ContextType, BaseContext, ModelOutputsType, DataType
+
+from mediahack.intra.ext_att_mask import get_extended_attention_mask
 
 AUDIO_ENCODER = 'Tochka-AI/ruRoPEBert-e5-base-2k'
 NUM_CLASSES = 18
@@ -16,11 +21,34 @@ class ShareModel(nn.Module):
     def __init__(self):
         super().__init__()
         self.audio_encoder = AutoModel.from_pretrained(AUDIO_ENCODER, trust_remote_code=True, pooler_type='first_token_transform')
+
+        cfg = RobertaConfig(
+            hidden_size=768,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            intermediate_size=768 * 4,
+            hidden_act='gelu'
+        )
+        self.total_encoder = RobertaEncoder(cfg)
+        self.total_pooler = RobertaPooler(cfg)
+        self.cls_token = nn.Parameter(torch.ones((1, 1, 768)), requires_grad=True)
         self.cls = nn.Linear(768, NUM_CLASSES)
 
-    def forward(self, audio_ids, audio_mask, **kwargs):
+    def forward(self, audio_ids, audio_mask, clip_embeddings, clip_mask, **kwargs):
         audio_out = self.audio_encoder(input_ids=audio_ids, attention_mask=audio_mask).pooler_output
-        logits = self.cls(audio_out)
+        transformer_input_embeds = torch.cat([
+            self.cls_token.repeat(audio_out.shape[0], 1, 1),
+            audio_out.unsqueeze(1),
+            clip_embeddings
+        ], dim=1)
+        transformer_input_mask = torch.cat([
+            torch.ones((audio_mask.shape[0], 2), dtype=audio_mask.dtype, device=audio_mask.device),
+            clip_mask
+        ], dim=1)
+        transformer_input_mask = get_extended_attention_mask(transformer_input_mask, dtype=torch.float32)
+        transformer_outs = self.total_encoder(transformer_input_embeds, transformer_input_mask).last_hidden_state
+        transformer_outs = self.total_pooler(transformer_outs)
+        logits = self.cls(transformer_outs)
         return logits
 
 
@@ -61,9 +89,10 @@ class ShareTrainable(XZTrainable):
 
 
 class ShareDataset(Dataset):
-    def __init__(self, targets: dict[int, int], transcriptions: dict[int, str]):
+    def __init__(self, targets: dict[int, int], transcriptions: dict[int, str], clip_embed_dir: Path):
         self.targets = targets
         self.transcriptions = transcriptions
+        self.clip_embed_dir = clip_embed_dir
         self.idx_to_key = {i: k for i, k in enumerate(targets)}
         self.tokenizer_audio = AutoTokenizer.from_pretrained(AUDIO_ENCODER)
 
@@ -71,14 +100,24 @@ class ShareDataset(Dataset):
         return len(self.targets)
 
     def __getitem__(self, item):
-        target = self.targets[self.idx_to_key[item]]
-        transcription = self.transcriptions[self.idx_to_key[item]]
+        key = self.idx_to_key[item]
+        target = self.targets[key]
+        transcription = self.transcriptions[key]
         transcription_enc = self.tokenizer_audio(transcription)
+        clip_file = self.clip_embed_dir / f'{key}.pt'
+        if clip_file.is_file():
+            with clip_file.open('rb') as f:
+                clip_embed = torch.load(f)
+        else:
+            clip_embed = torch.empty((0, 768))
+        clip_mask = torch.ones((clip_embed.shape[0], ), dtype=torch.long)
 
         return {
             'target': torch.scalar_tensor(target, dtype=torch.long),
             'audio_ids': torch.tensor(transcription_enc.input_ids[:TRUNCATE_TEXT_TO], dtype=torch.long),
-            'audio_mask': torch.tensor(transcription_enc.attention_mask[:TRUNCATE_TEXT_TO], dtype=torch.long)
+            'audio_mask': torch.tensor(transcription_enc.attention_mask[:TRUNCATE_TEXT_TO], dtype=torch.long),
+            'clip_embed': clip_embed,
+            'clip_mask': clip_mask
         }
 
 
@@ -88,10 +127,18 @@ def stack_pad_left(items: list[torch.Tensor], pad_value):
     return torch.stack(items, dim=0)
 
 
+def stack_pad_left_3d(items: list[torch.Tensor], pad_value):
+    max_len = max(x.shape[0] for x in items)
+    items = [F.pad(x, (0, 0, 0, max_len - x.shape[0]), value=pad_value) for x in items]
+    return torch.stack(items, dim=0)
+
+
 class ShareCollator:
     def __call__(self, batch):
         return {
             'target': torch.stack([x['target'] for x in batch]),
             'audio_ids': stack_pad_left([x['audio_ids'] for x in batch], 0),
-            'audio_mask': stack_pad_left([x['audio_mask'] for x in batch], 0)
+            'audio_mask': stack_pad_left([x['audio_mask'] for x in batch], 0),
+            'clip_embeddings': stack_pad_left_3d([x['clip_embed'] for x in batch], pad_value=0),
+            'clip_mask': stack_pad_left([x['clip_mask'] for x in batch], pad_value=0)
         }
