@@ -43,6 +43,8 @@ class ShareModel(nn.Module):
         super().__init__()
         self.audio_encoder = AutoModel.from_pretrained(AUDIO_ENCODER, trust_remote_code=True,
                                                        pooler_type='first_token_transform')
+        self.ocr_encoder = AutoModel.from_pretrained(OCR_ENCODER, trust_remote_code=True,
+                                                     pooler_type='first_token_transform')
         self.clip_transform = nn.Linear(768, 768)
         self.clip_pos = nn.Embedding(MAX_CLIP_EMBEDDINGS, 768)
         self.no_clip_embed = nn.Parameter(torch.ones((1, 1, 768)), requires_grad=True)
@@ -61,8 +63,9 @@ class ShareModel(nn.Module):
         nn.init.uniform_(self.cls_token)
         self.cls = nn.Linear(768, NUM_CLASSES)
 
-    def forward(self, audio_ids, audio_mask, clip_embeddings, clip_mask, has_clip, **kwargs):
+    def forward(self, audio_ids, audio_mask, clip_embeddings, clip_mask, has_clip, ocr_ids, ocr_mask, **kwargs):
         audio_out = self.audio_encoder(input_ids=audio_ids, attention_mask=audio_mask).pooler_output
+        ocr_out = self.ocr_encoder(input_ids=ocr_ids, attention_mask=ocr_mask).pooler_output
 
         hasnt_clip = ~has_clip
         clip_embeddings[hasnt_clip] = self.no_clip_embed.repeat(hasnt_clip.sum(), 1, 1)
@@ -75,10 +78,11 @@ class ShareModel(nn.Module):
         transformer_input_embeds = torch.cat([
             self.cls_token.repeat(audio_out.shape[0], 1, 1),
             audio_out.unsqueeze(1),
+            ocr_out.unsqueeze(1),
             clip_embeddings
         ], dim=1)
         transformer_input_mask = torch.cat([
-            torch.ones((audio_mask.shape[0], 2), dtype=audio_mask.dtype, device=audio_mask.device),
+            torch.ones((audio_mask.shape[0], 3), dtype=audio_mask.dtype, device=audio_mask.device),
             clip_mask
         ], dim=1)
         transformer_input_mask = get_extended_attention_mask(transformer_input_mask, dtype=torch.float32)
@@ -128,24 +132,30 @@ class ShareTrainable(XZTrainable):
 
 
 class ShareDataset(Dataset):
-    def __init__(self, targets: dict[int, int], transcriptions: dict[int, str], clip_embed_dir: Path):
-        self.targets = targets
+    def __init__(self, targets: dict[int, int] | list[int], transcriptions: dict[int, str], clip_embed_dir: Path, ocr_dir: Path, is_train: bool = True):
+        self.is_train = is_train
+        if is_train:
+            self.targets = targets
         self.transcriptions = transcriptions
         self.clip_embed_dir = clip_embed_dir
-        self.idx_to_key = {i: k for i, k in enumerate(targets)}
+        self.ocr_dir = ocr_dir
+        if is_train:
+            self.idx_to_key = {i: k for i, k in enumerate(targets)}
+        else:
+            self.idx_to_key = {i: k for i, k in enumerate(targets)}
         self.tokenizer_audio = AutoTokenizer.from_pretrained(AUDIO_ENCODER, max_length=TRUNCATE_TEXT_TO,
                                                              truncation='longest_first')
         self.tokenizer_ocr = AutoTokenizer.from_pretrained(OCR_ENCODER, max_length=TRUNCATE_TEXT_TO,
                                                            truncation='longest_first')
 
     def __len__(self):
-        return len(self.targets)
+        return len(self.idx_to_key)
 
     def __getitem__(self, item):
         key = self.idx_to_key[item]
-        target = self.targets[key]
         transcription = self.transcriptions[key] if key in self.transcriptions else ''
         transcription_enc = self.tokenizer_audio('passage: ' + transcription)
+
         clip_file = self.clip_embed_dir / f'{key}.pt'
         if clip_file.is_file():
             with clip_file.open('rb') as f:
@@ -156,14 +166,34 @@ class ShareDataset(Dataset):
             has_clip = False
         clip_mask = torch.ones((clip_embed.shape[0],), dtype=torch.long)
 
-        return {
-            'target': torch.scalar_tensor(target, dtype=torch.long),
-            'audio_ids': torch.tensor(transcription_enc.input_ids[:TRUNCATE_TEXT_TO], dtype=torch.long),
-            'audio_mask': torch.tensor(transcription_enc.attention_mask[:TRUNCATE_TEXT_TO], dtype=torch.long),
+        ocr_file = self.ocr_dir / f'{key}.pt'
+        if ocr_file.is_file():
+            with ocr_file.open('rb') as f:
+                ocr = torch.load(f)
+            ocr = [x for x in ocr if x]
+            ocr = '\n'.join(ocr)
+        else:
+            ocr = ''
+        ocr = ocr.strip()
+        if ocr == '':
+            ocr = '[пусто]'
+        ocr = ocr.lower()
+        ocr_enc = self.tokenizer_ocr('passage' + ocr)
+
+        dct = {
+            'key': key,
+            'audio_ids': torch.tensor(transcription_enc.input_ids, dtype=torch.long),
+            'audio_mask': torch.tensor(transcription_enc.attention_mask, dtype=torch.long),
             'clip_embed': clip_embed,
             'clip_mask': clip_mask,
-            'has_clip': torch.scalar_tensor(has_clip, dtype=torch.bool)
+            'has_clip': torch.scalar_tensor(has_clip, dtype=torch.bool),
+            'ocr_ids': torch.tensor(ocr_enc.input_ids, dtype=torch.long),
+            'ocr_mask': torch.tensor(ocr_enc.attention_mask, dtype=torch.long)
         }
+        if self.is_train:
+            target = self.targets[key]
+            dct['target'] = torch.scalar_tensor(target, dtype=torch.long),
+        return dct
 
 
 def stack_pad_right(items: list[torch.Tensor], pad_value):
@@ -180,11 +210,16 @@ def stack_pad_right_3d(items: list[torch.Tensor], pad_value):
 
 class ShareCollator:
     def __call__(self, batch):
-        return {
-            'target': torch.stack([x['target'] for x in batch]),
+        dct = {
+            'key': [x['key'] for x in batch],
             'audio_ids': stack_pad_right([x['audio_ids'] for x in batch], 0),
             'audio_mask': stack_pad_right([x['audio_mask'] for x in batch], 0),
             'clip_embeddings': stack_pad_right_3d([x['clip_embed'] for x in batch], pad_value=0),
             'clip_mask': stack_pad_right([x['clip_mask'] for x in batch], pad_value=0),
             'has_clip': torch.stack([x['has_clip'] for x in batch]),
+            'ocr_ids': stack_pad_right([x['ocr_ids'] for x in batch], 0),
+            'ocr_mask': stack_pad_right([x['ocr_mask'] for x in batch], 0),
         }
+        if 'target' in batch[0]:
+            dct['target'] = torch.stack([x['target'] for x in batch])
+        return dct
