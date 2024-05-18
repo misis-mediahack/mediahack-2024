@@ -57,7 +57,7 @@ def main(transcription_path: Path, clip_dir: Path, target_path: Path):
 
     trainer = XZTrainer(
         config=XZTrainerConfig(
-            experiment_name='train-withclip',
+            experiment_name='train-withclip-passage',
             minibatch_size=4,
             minibatch_size_eval=4,
             epochs=1,

@@ -13,6 +13,7 @@ from xztrainer import XZTrainable, ContextType, BaseContext, ModelOutputsType, D
 from mediahack.intra.ext_att_mask import get_extended_attention_mask
 
 AUDIO_ENCODER = 'Tochka-AI/ruRoPEBert-e5-base-2k'
+OCR_ENCODER = 'Tochka-AI/ruRoPEBert-e5-base-2k'
 NUM_CLASSES = 18
 TRUNCATE_TEXT_TO = 1024
 
@@ -94,7 +95,8 @@ class ShareDataset(Dataset):
         self.transcriptions = transcriptions
         self.clip_embed_dir = clip_embed_dir
         self.idx_to_key = {i: k for i, k in enumerate(targets)}
-        self.tokenizer_audio = AutoTokenizer.from_pretrained(AUDIO_ENCODER)
+        self.tokenizer_audio = AutoTokenizer.from_pretrained(AUDIO_ENCODER, max_length=TRUNCATE_TEXT_TO, truncation='longest_first')
+        self.tokenizer_ocr = AutoTokenizer.from_pretrained(OCR_ENCODER, max_length=TRUNCATE_TEXT_TO, truncation='longest_first')
 
     def __len__(self):
         return len(self.targets)
@@ -103,7 +105,7 @@ class ShareDataset(Dataset):
         key = self.idx_to_key[item]
         target = self.targets[key]
         transcription = self.transcriptions[key]
-        transcription_enc = self.tokenizer_audio(transcription)
+        transcription_enc = self.tokenizer_audio('passage: ' + transcription)
         clip_file = self.clip_embed_dir / f'{key}.pt'
         if clip_file.is_file():
             with clip_file.open('rb') as f:
