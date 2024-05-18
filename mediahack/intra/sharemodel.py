@@ -97,7 +97,8 @@ class ShareTrainable(XZTrainable):
         self._loss = None
 
     def on_load(self, context: TrainContext, step: int):
-        self._loss = nn.CrossEntropyLoss(weight=torch.tensor(CLASS_WEIGHTS, device=context.model_unwrapped.cls_token.device, dtype=torch.float32))
+        self._loss = nn.CrossEntropyLoss(
+            weight=torch.tensor(CLASS_WEIGHTS, device=context.model_unwrapped.cls_token.device, dtype=torch.float32))
 
     def step(self, context: BaseContext, data: DataType) -> tuple[Tensor, ModelOutputsType]:
         model_logits = context.model(**data)
@@ -132,7 +133,8 @@ class ShareTrainable(XZTrainable):
 
 
 class ShareDataset(Dataset):
-    def __init__(self, targets: dict[int, int] | list[int], transcriptions: dict[int, str], clip_embed_dir: Path, ocr_dir: Path, is_train: bool = True):
+    def __init__(self, targets: dict[int, int] | list[int], transcriptions: dict[int, str], clip_embed_dir: Path,
+                 ocr_dir: Path, is_train: bool = True):
         self.is_train = is_train
         if is_train:
             self.targets = targets
@@ -143,10 +145,8 @@ class ShareDataset(Dataset):
             self.idx_to_key = {i: k for i, k in enumerate(targets)}
         else:
             self.idx_to_key = {i: k for i, k in enumerate(targets)}
-        self.tokenizer_audio = AutoTokenizer.from_pretrained(AUDIO_ENCODER, max_length=TRUNCATE_TEXT_TO,
-                                                             truncation='longest_first')
-        self.tokenizer_ocr = AutoTokenizer.from_pretrained(OCR_ENCODER, max_length=TRUNCATE_TEXT_TO,
-                                                           truncation='longest_first')
+        self.tokenizer_audio = AutoTokenizer.from_pretrained(AUDIO_ENCODER)
+        self.tokenizer_ocr = AutoTokenizer.from_pretrained(OCR_ENCODER)
 
     def __len__(self):
         return len(self.idx_to_key)
@@ -154,7 +154,8 @@ class ShareDataset(Dataset):
     def __getitem__(self, item):
         key = self.idx_to_key[item]
         transcription = self.transcriptions[key] if key in self.transcriptions else ''
-        transcription_enc = self.tokenizer_audio('passage: ' + transcription)
+        transcription_enc = self.tokenizer_audio('passage: ' + transcription, max_length=TRUNCATE_TEXT_TO,
+                                                 truncation='longest_first')
 
         clip_file = self.clip_embed_dir / f'{key}.pt'
         if clip_file.is_file():
@@ -178,7 +179,8 @@ class ShareDataset(Dataset):
         if ocr == '':
             ocr = '[пусто]'
         ocr = ocr.lower()
-        ocr_enc = self.tokenizer_ocr('passage: ' + ocr)
+        ocr_enc = self.tokenizer_ocr('passage: ' + ocr, max_length=TRUNCATE_TEXT_TO,
+                                     truncation='longest_first')
 
         dct = {
             'key': key,
@@ -192,7 +194,7 @@ class ShareDataset(Dataset):
         }
         if self.is_train:
             target = self.targets[key]
-            dct['target'] = torch.scalar_tensor(target, dtype=torch.long),
+            dct['target'] = torch.scalar_tensor(target, dtype=torch.long)
         return dct
 
 
