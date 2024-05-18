@@ -43,7 +43,7 @@ def main(transcription_path: Path, clip_dir: Path, ocr_dir: Path, target_path: P
     train_ids, val_ids = set(train_ids), set(val_ids)
     train_targets, val_targets = split_dict(targets, train_ids), split_dict(targets, val_ids)
     train_transcriptions, val_transcriptions = split_dict(transcriptions, train_ids), split_dict(transcriptions, val_ids)
-    train_ds, val_ds = ShareDataset(train_targets, train_transcriptions, clip_dir, ocr_dir), ShareDataset(val_targets, val_transcriptions, clip_dir, ocr_dir)
+    train_ds, val_ds = ShareDataset(train_targets, train_transcriptions, clip_dir, ocr_dir, is_train=True), ShareDataset(val_targets, val_transcriptions, clip_dir, ocr_dir, is_train=True)
 
     accel = Accelerator(
         gradient_accumulation_steps=4,
@@ -54,7 +54,7 @@ def main(transcription_path: Path, clip_dir: Path, ocr_dir: Path, target_path: P
 
     trainer = XZTrainer(
         config=XZTrainerConfig(
-            experiment_name='train',
+            experiment_name='train-clip+audio+ocr',
             minibatch_size=4,
             minibatch_size_eval=4,
             epochs=1,

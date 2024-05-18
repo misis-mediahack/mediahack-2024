@@ -178,7 +178,7 @@ class ShareDataset(Dataset):
         if ocr == '':
             ocr = '[пусто]'
         ocr = ocr.lower()
-        ocr_enc = self.tokenizer_ocr('passage' + ocr)
+        ocr_enc = self.tokenizer_ocr('passage: ' + ocr)
 
         dct = {
             'key': key,

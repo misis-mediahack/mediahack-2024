@@ -35,7 +35,6 @@ def extract_ids(video_dir: Path):
     return identifiers
 
 
-
 @click.command()
 @click.option('--video-dir', type=Path, required=True)
 @click.option('--model-file', type=Path, required=True)
