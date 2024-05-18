@@ -117,7 +117,7 @@ class ShareDataset(Dataset):
     def __getitem__(self, item):
         key = self.idx_to_key[item]
         target = self.targets[key]
-        transcription = self.transcriptions[key]
+        transcription = self.transcriptions[key] if key in self.transcriptions else ''
         transcription_enc = self.tokenizer_audio('passage: ' + transcription)
         clip_file = self.clip_embed_dir / f'{key}.pt'
         if clip_file.is_file():

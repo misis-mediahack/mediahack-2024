@@ -38,10 +38,6 @@ def main(transcription_path: Path, clip_dir: Path, target_path: Path):
     targets = pd.read_csv(target_path, dtype={'Advertisement ID': int, 'Segment_num': int})
     targets = {int(x['Advertisement ID']): map_class(x['Segment_num']) for _, x in targets.iterrows()}
 
-    # КОСТЫЛЬ
-    targets = {k: v for k, v in targets.items() if k in transcriptions}
-    # КОСТЫЛЬ END
-
     train_ids, val_ids = train_test_split(list(targets.keys()), test_size=0.1, random_state=0xCAFE)
     train_ids, val_ids = set(train_ids), set(val_ids)
     train_targets, val_targets = split_dict(targets, train_ids), split_dict(targets, val_ids)
@@ -80,9 +76,6 @@ def main(transcription_path: Path, clip_dir: Path, target_path: Path):
         accelerator=accel
     )
     trainer.train(train_ds, val_ds)
-
-    print(train_ds[0])
-    print(123)
 
 
 if __name__ == '__main__':
