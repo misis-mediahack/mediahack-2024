@@ -54,10 +54,10 @@ def main(transcription_path: Path, clip_dir: Path, ocr_dir: Path, target_path: P
 
     trainer = XZTrainer(
         config=XZTrainerConfig(
-            experiment_name='train-clip+audio+ocr',
+            experiment_name='train-clip+audio+ocr-3eps',
             minibatch_size=4,
             minibatch_size_eval=4,
-            epochs=1,
+            epochs=3,
             gradient_clipping=3.0,
             optimizer=lambda module: AdamW(module.parameters(), lr=5e-5, weight_decay=1e-3),
             scheduler=lambda optimizer, total_steps: get_cosine_schedule_with_warmup(optimizer,
