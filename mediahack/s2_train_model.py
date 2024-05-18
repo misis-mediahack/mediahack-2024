@@ -32,18 +32,23 @@ def split_dict(x, include):
 @click.option('--clip-dir', type=Path, required=True)
 @click.option('--ocr-dir', type=Path, required=True)
 @click.option('--target-path', type=Path, required=True)
-def main(transcription_path: Path, clip_dir: Path, ocr_dir: Path, target_path: Path):
+@click.option('--no-test', type=bool, default=False)
+def main(transcription_path: Path, clip_dir: Path, ocr_dir: Path, target_path: Path, no_test: bool):
     enable_tf32()
     transcriptions = pd.read_csv(transcription_path, dtype={'file': str, 'transcription': str}).fillna('')
     transcriptions = {file_name_to_id(x.file): x.transcription for x in transcriptions.itertuples()}
     targets = pd.read_csv(target_path, dtype={'Advertisement ID': int, 'Segment_num': int})
     targets = {int(x['Advertisement ID']): map_class(x['Segment_num']) for _, x in targets.iterrows()}
 
-    train_ids, val_ids = train_test_split(list(targets.keys()), test_size=0.1, random_state=0xCAFE, stratify=list(targets.values()))
-    train_ids, val_ids = set(train_ids), set(val_ids)
-    train_targets, val_targets = split_dict(targets, train_ids), split_dict(targets, val_ids)
-    train_transcriptions, val_transcriptions = split_dict(transcriptions, train_ids), split_dict(transcriptions, val_ids)
-    train_ds, val_ds = ShareDataset(train_targets, train_transcriptions, clip_dir, ocr_dir, is_train=True), ShareDataset(val_targets, val_transcriptions, clip_dir, ocr_dir, is_train=True)
+    if no_test:
+        train_ds = ShareDataset(targets, transcriptions, clip_dir, ocr_dir, is_train=True)
+        val_ds = None
+    else:
+        train_ids, val_ids = train_test_split(list(targets.keys()), test_size=0.1, random_state=0xCAFE, stratify=list(targets.values()))
+        train_ids, val_ids = set(train_ids), set(val_ids)
+        train_targets, val_targets = split_dict(targets, train_ids), split_dict(targets, val_ids)
+        train_transcriptions, val_transcriptions = split_dict(transcriptions, train_ids), split_dict(transcriptions, val_ids)
+        train_ds, val_ds = ShareDataset(train_targets, train_transcriptions, clip_dir, ocr_dir, is_train=True), ShareDataset(val_targets, val_transcriptions, clip_dir, ocr_dir, is_train=True)
 
     accel = Accelerator(
         gradient_accumulation_steps=4,
@@ -54,7 +59,7 @@ def main(transcription_path: Path, clip_dir: Path, ocr_dir: Path, target_path: P
 
     trainer = XZTrainer(
         config=XZTrainerConfig(
-            experiment_name='train-clip+audio+ocr-3eps',
+            experiment_name='train-clip+audio+ocr-3eps-notestdata',
             minibatch_size=4,
             minibatch_size_eval=4,
             epochs=3,
