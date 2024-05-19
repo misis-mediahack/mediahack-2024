@@ -42,6 +42,8 @@ python -m mediahack.s2_train_model --transcription-path ./data/transcriptions.cs
 
 
 ## Предсказание
+Предобученную модель можно сказать [здесь](https://drive.google.com/file/d/1IlaIjmAg5pV6RWhnIg6yce11VyrUTU4D/view?usp=sharing)
+
 Убедитесь, что вы выполнили блок Подготовка, а также сгенерировали фичи для тестовых данных (см. блок Генерация фичей)
 
 Убедитесь, что вы обучили модель или имеете файл с обученной моделью
