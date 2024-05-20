@@ -60,7 +60,7 @@ python -m mediahack.s3_infer --video-dir ./data-test --model-file ./model.safete
 
 
 ## Дашборд
-
+ 
 Запустить дашборд можно командой
 ```bash
  python -m mediahack.dashboard --dashboard-data data/dashboard_data.csv --segment-dict data/segment_dict.xlsx --segment-predictions data/train_segments.csv
